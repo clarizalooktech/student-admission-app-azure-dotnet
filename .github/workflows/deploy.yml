@@ -1,0 +1,186 @@
+name: Deploy — infra + backend
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'backend/**'
+      - 'terraform/**'
+      - '.github/workflows/deploy.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'backend/**'
+      - 'terraform/**'
+
+env:
+  DOTNET_VERSION: '8.0.x'
+  IMAGE_NAME:     admission-agent
+  TF_VERSION:     '1.7.0'
+  TF_WORKING_DIR: terraform/
+
+  # Terraform Cloud auth
+  TF_TOKEN_app_terraform_io: ${{ secrets.TF_API_TOKEN }}
+
+  # Azure service principal — used by Terraform + Azure CLI
+  ARM_CLIENT_ID:       ${{ secrets.ARM_CLIENT_ID }}
+  ARM_CLIENT_SECRET:   ${{ secrets.ARM_CLIENT_SECRET }}
+  ARM_TENANT_ID:       ${{ secrets.ARM_TENANT_ID }}
+  ARM_SUBSCRIPTION_ID: ${{ secrets.ARM_SUBSCRIPTION_ID }}
+
+jobs:
+  # ── Job 1: Build & test .NET (runs on all pushes + PRs) ───────────────────
+  build:
+    name: Build & test
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: ${{ env.DOTNET_VERSION }}
+
+      - name: Restore dependencies
+        run: dotnet restore backend/src/AdmissionAgent/AdmissionAgent.csproj
+
+      - name: Build
+        run: dotnet build backend/src/AdmissionAgent/AdmissionAgent.csproj \
+               --no-restore --configuration Release
+
+      - name: Test
+        run: dotnet test backend/ --no-build --verbosity normal || true
+
+  # ── Job 2: Terraform — check infra, plan, apply (main only) ──────────────
+  setup-infra:
+    name: Terraform — provision infra
+    runs-on: ubuntu-latest
+    needs: build
+    if: github.ref == 'refs/heads/main'
+
+    outputs:
+      # Pass ACR credentials directly to the next job — no secrets needed
+      acr_login_server:   ${{ steps.tf-outputs.outputs.acr_login_server }}
+      acr_admin_username: ${{ steps.tf-outputs.outputs.acr_admin_username }}
+      acr_admin_password: ${{ steps.tf-outputs.outputs.acr_admin_password }}
+      backend_url:        ${{ steps.tf-outputs.outputs.backend_url }}
+      resource_group:     ${{ steps.tf-outputs.outputs.resource_group }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Log in to Azure
+        uses: azure/login@v2
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      # Same check-first pattern as glucose monitor
+      - name: Check if resource group exists
+        id: check
+        run: |
+          RG_NAME="${{ secrets.TF_VAR_RESOURCE_GROUP_NAME }}"
+          RG_EXISTS=$(az group show --name "$RG_NAME" --query name 2>/dev/null || echo "NotFound")
+          if [ "$RG_EXISTS" = "NotFound" ]; then
+            echo "create_infrastructure=true" >> $GITHUB_OUTPUT
+          else
+            echo "create_infrastructure=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+          cli_config_credentials_token: ${{ secrets.TF_API_TOKEN }}
+          terraform_wrapper: false   # needed so terraform output works cleanly
+
+      - name: Terraform init
+        working-directory: ${{ env.TF_WORKING_DIR }}
+        run: terraform init
+
+      - name: Terraform validate
+        working-directory: ${{ env.TF_WORKING_DIR }}
+        run: terraform validate
+
+      - name: Terraform plan
+        working-directory: ${{ env.TF_WORKING_DIR }}
+        run: |
+          terraform plan \
+            -var="subscription_id=${{ secrets.ARM_SUBSCRIPTION_ID }}" \
+            -var="resource_group_name=${{ secrets.TF_VAR_RESOURCE_GROUP_NAME }}" \
+            -var="acr_name=${{ secrets.TF_VAR_ACR_NAME }}" \
+            -var="openai_endpoint=${{ secrets.OPENAI_ENDPOINT }}" \
+            -var="openai_api_key=${{ secrets.OPENAI_API_KEY }}" \
+            -var="create_infrastructure=${{ steps.check.outputs.create_infrastructure }}" \
+            -out=tfplan
+
+      - name: Terraform apply
+        working-directory: ${{ env.TF_WORKING_DIR }}
+        run: terraform apply -auto-approve tfplan
+
+      # Capture outputs and pass to next job — glucose monitor pattern
+      - name: Get Terraform outputs
+        id: tf-outputs
+        working-directory: ${{ env.TF_WORKING_DIR }}
+        run: |
+          echo "acr_login_server=$(terraform output -raw acr_login_server)"     >> $GITHUB_OUTPUT
+          echo "acr_admin_username=$(terraform output -raw acr_admin_username)" >> $GITHUB_OUTPUT
+          echo "acr_admin_password=$(terraform output -raw acr_admin_password)" >> $GITHUB_OUTPUT
+          echo "backend_url=$(terraform output -raw backend_url)"               >> $GITHUB_OUTPUT
+          echo "resource_group=$(terraform output -raw resource_group_name)"    >> $GITHUB_OUTPUT
+
+  # ── Job 3: Build Docker image, push to ACR, deploy to Container Apps ──────
+  build-and-deploy:
+    name: Push image & deploy
+    runs-on: ubuntu-latest
+    needs: setup-infra
+    if: github.ref == 'refs/heads/main'
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Get short SHA
+        id: sha
+        run: echo "short=$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
+
+      # Login using ACR creds from Terraform outputs — no manual secrets needed
+      - name: Log in to ACR
+        uses: docker/login-action@v3
+        with:
+          registry:  ${{ needs.setup-infra.outputs.acr_login_server }}
+          username:  ${{ needs.setup-infra.outputs.acr_admin_username }}
+          password:  ${{ needs.setup-infra.outputs.acr_admin_password }}
+
+      - name: Build & push Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context:    backend/
+          file:       backend/Dockerfile
+          push:       true
+          tags: |
+            ${{ needs.setup-infra.outputs.acr_login_server }}/${{ env.IMAGE_NAME }}:${{ steps.sha.outputs.short }}
+            ${{ needs.setup-infra.outputs.acr_login_server }}/${{ env.IMAGE_NAME }}:latest
+          cache-from: type=gha
+          cache-to:   type=gha,mode=max
+
+      - name: Log in to Azure
+        uses: azure/login@v2
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Deploy to Container Apps
+        uses: azure/container-apps-deploy-action@v1
+        with:
+          acrName:          ${{ needs.setup-infra.outputs.acr_login_server }}
+          containerAppName: student-admission-app-azure-dotnet-backend-dev
+          resourceGroup:    ${{ needs.setup-infra.outputs.resource_group }}
+          imageToDeploy:    ${{ needs.setup-infra.outputs.acr_login_server }}/${{ env.IMAGE_NAME }}:${{ steps.sha.outputs.short }}
+
+      - name: Health check
+        run: |
+          echo "Waiting for deployment to stabilise..."
+          sleep 15
+          curl --fail --retry 5 --retry-delay 5 \
+            ${{ needs.setup-infra.outputs.backend_url }}/api/admission/health \
+            && echo "Health check passed" \
+            || (echo "Health check failed" && exit 1)

@@ -1,0 +1,22 @@
+# Terraform — sensitive files never committed (same as glucose monitor)
+terraform/.terraform/
+terraform/*.tfplan
+terraform/*.tfstate
+terraform/*.tfstate.backup
+terraform/.terraform.lock.hcl
+terraform/terraform.tfvars   # real values — use terraform.tfvars.example as template
+
+# .NET
+backend/bin/
+backend/obj/
+backend/**/*.user
+backend/**/appsettings.Development.json
+
+# Node (if you ever add a build step)
+node_modules/
+dist/
+
+# Secrets
+.env
+.env.local
+*.env

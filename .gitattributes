@@ -1,0 +1,10 @@
+* text=auto
+*.sh text eol=lf
+*.yml text eol=lf
+*.tf text eol=lf
+*.cs text eol=lf
+*.jsx text eol=lf
+*.css text eol=lf
+*.json text eol=lf
+*.md text eol=lf
+Dockerfile text eol=lf
