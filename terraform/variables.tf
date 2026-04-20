@@ -47,7 +47,7 @@ variable "openai_api_key" {
 variable "openai_model" {
   description = "Azure OpenAI model deployment name"
   type        = string
-  default     = "gpt-4o-mini"
+  default     = "gpt-4o"
 }
 
 # ── Infrastructure creation flag (same pattern as glucose monitor) ─────────
