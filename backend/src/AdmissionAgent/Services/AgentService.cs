@@ -187,21 +187,15 @@ public class AdmissionAgentService
     {
         var toolSummary = string.Join("\n", toolResults.Select(kv => $"- {kv.Key}: {kv.Value}"));
 
-        var prompt = $"""
-            You are a university admission officer. Based on the tool results below, make a final decision.
-            
-            Applicant: {form.FirstName} {form.LastName}
-            Programme: {form.Programme}
-            
-            Tool results:
-            {toolSummary}
-            
-            Respond with JSON only, no markdown:
-            {{
-              "outcome": "approved" | "review" | "declined",
-              "summary": "2-3 sentence explanation for the applicant"
-            }}
-            """;
+        var prompt = $"You are a university admission officer. Based on the tool results below, make a final decision.\n\n" +
+            $"Applicant: {form.FirstName} {form.LastName}\n" +
+            $"Programme: {form.Programme}\n\n" +
+            $"Tool results:\n{toolSummary}\n\n" +
+            "Respond with JSON only, no markdown:\n" +
+            "{\n" +
+            "  \"outcome\": \"approved\" | \"review\" | \"declined\",\n" +
+            "  \"summary\": \"2-3 sentence explanation for the applicant\"\n" +
+            "}";
 
         var response = await _openAi.GetChatCompletionsAsync(
             new ChatCompletionsOptions(_config.Model, [
