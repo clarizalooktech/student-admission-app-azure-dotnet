@@ -74,15 +74,20 @@ jobs:
         with:
           creds: ${{ secrets.AZURE_CREDENTIALS }}
 
-      # Same check-first pattern as glucose monitor
       - name: Check if resource group exists
         id: check
         run: |
           RG_NAME="${{ secrets.TF_VAR_RESOURCE_GROUP_NAME }}"
+          ACR_NAME="${{ secrets.TF_VAR_ACR_NAME }}"
+
           RG_EXISTS=$(az group show --name "$RG_NAME" --query name 2>/dev/null || echo "NotFound")
-          if [ "$RG_EXISTS" = "NotFound" ]; then
+          ACR_EXISTS=$(az acr show --name "$ACR_NAME" --query name 2>/dev/null || echo "NotFound")
+
+          if [ "$RG_EXISTS" = "NotFound" ] || [ "$ACR_EXISTS" = "NotFound" ]; then
+            echo "Infrastructure incomplete — will create"
             echo "create_infrastructure=true" >> $GITHUB_OUTPUT
           else
+            echo "Infrastructure exists — skipping creation"
             echo "create_infrastructure=false" >> $GITHUB_OUTPUT
           fi
 
