@@ -118,6 +118,20 @@ jobs:
             -var="create_infrastructure=${{ steps.check.outputs.create_infrastructure }}" \
             -out=tfplan
 
+      - name: Import existing resource group
+        working-directory: ${{ env.TF_WORKING_DIR }}
+        continue-on-error: true
+        run: |
+          terraform import \
+            -var="subscription_id=${{ secrets.ARM_SUBSCRIPTION_ID }}" \
+            -var="resource_group_name=${{ secrets.TF_VAR_RESOURCE_GROUP_NAME }}" \
+            -var="acr_name=${{ secrets.TF_VAR_ACR_NAME }}" \
+            -var="openai_endpoint=${{ secrets.OPENAI_ENDPOINT }}" \
+            -var="openai_api_key=${{ secrets.OPENAI_API_KEY }}" \
+            -var="create_infrastructure=true" \
+            azurerm_resource_group.main[0] \
+            /subscriptions/9e79deeb-336d-4397-86e1-b1601bbd0240/resourceGroups/student-admission-app-rg
+
       - name: Terraform apply
         working-directory: ${{ env.TF_WORKING_DIR }}
         run: terraform apply -auto-approve tfplan
