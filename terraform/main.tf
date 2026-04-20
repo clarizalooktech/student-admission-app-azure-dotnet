@@ -8,9 +8,9 @@ terraform {
     }
   }
 
-  # Terraform Cloud — free tier remote state (same as glucose monitor)
+  # Terraform Cloud — free tier remote state
   cloud {
-    organization = "YOUR-TF-CLOUD-ORG"     # replace with your Terraform Cloud org
+    organization = "clarizalooktech"
     workspaces {
       name = "student-admission-app-azure-dotnet"
     }
