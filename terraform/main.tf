@@ -8,7 +8,6 @@ terraform {
     }
   }
 
-  # Terraform Cloud — free tier remote state
   cloud {
     organization = "clarizalooktech"
     workspaces {
@@ -22,14 +21,11 @@ provider "azurerm" {
   subscription_id = var.subscription_id
 }
 
-# ── Resource group ────────────────────────────────────────────────────────────
-# Data source — reference existing RG if it already exists
 data "azurerm_resource_group" "existing" {
   count = var.create_infrastructure ? 0 : 1
   name  = var.resource_group_name
 }
 
-# Create new RG only on first deploy
 resource "azurerm_resource_group" "main" {
   count    = var.create_infrastructure ? 1 : 0
   name     = var.resource_group_name
@@ -37,15 +33,9 @@ resource "azurerm_resource_group" "main" {
   tags     = local.tags
 }
 
-# Local to reference whichever RG exists
 locals {
-  resource_group_name = var.create_infrastructure \
-    ? azurerm_resource_group.main[0].name \
-    : data.azurerm_resource_group.existing[0].name
-
-  resource_group_location = var.create_infrastructure \
-    ? azurerm_resource_group.main[0].location \
-    : data.azurerm_resource_group.existing[0].location
+  resource_group_name     = var.create_infrastructure ? azurerm_resource_group.main[0].name : data.azurerm_resource_group.existing[0].name
+  resource_group_location = var.create_infrastructure ? azurerm_resource_group.main[0].location : data.azurerm_resource_group.existing[0].location
 
   tags = {
     project     = var.app_name
