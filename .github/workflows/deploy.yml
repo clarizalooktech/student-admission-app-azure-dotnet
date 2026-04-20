@@ -29,7 +29,7 @@ env:
   ARM_SUBSCRIPTION_ID: ${{ secrets.ARM_SUBSCRIPTION_ID }}
 
 jobs:
-  # ── Job 1: Build & test .NET (runs on all pushes + PRs) ───────────────────
+  # ── Job 1: Build & test .NET 
   build:
     name: Build & test
     runs-on: ubuntu-latest
@@ -46,8 +46,7 @@ jobs:
         run: dotnet restore backend/src/AdmissionAgent/AdmissionAgent.csproj
 
       - name: Build
-        run: dotnet build backend/src/AdmissionAgent/AdmissionAgent.csproj \
-               --no-restore --configuration Release
+        run: dotnet build backend/src/AdmissionAgent/AdmissionAgent.csproj --no-restore --configuration Release
 
       - name: Test
         run: dotnet test backend/ --no-build --verbosity normal || true
