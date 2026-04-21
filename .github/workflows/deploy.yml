@@ -79,20 +79,15 @@ jobs:
         working-directory: ${{ env.TF_WORKING_DIR }}
         run: terraform validate
 
-      - name: Terraform plan
+      - name: Terraform plan & apply
         working-directory: ${{ env.TF_WORKING_DIR }}
         run: |
-          terraform plan \
+          terraform apply -auto-approve \
             -var="subscription_id=${{ secrets.ARM_SUBSCRIPTION_ID }}" \
             -var="resource_group_name=${{ secrets.TF_VAR_RESOURCE_GROUP_NAME }}" \
             -var="acr_name=${{ secrets.TF_VAR_ACR_NAME }}" \
             -var="openai_endpoint=${{ secrets.OPENAI_ENDPOINT }}" \
-            -var="openai_api_key=${{ secrets.OPENAI_API_KEY }}" \
-            -out=tfplan
-
-      - name: Terraform apply
-        working-directory: ${{ env.TF_WORKING_DIR }}
-        run: terraform apply -auto-approve tfplan
+            -var="openai_api_key=${{ secrets.OPENAI_API_KEY }}"
 
       - name: Get Terraform outputs
         id: tf-outputs
