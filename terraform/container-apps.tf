@@ -38,7 +38,7 @@ resource "azurerm_container_app" "backend" {
 
     container {
       name   = "admission-backend"
-      image  = "${local.acr_login_server}/admission-agent:latest"
+      image = "mcr.microsoft.com/azuredocs/containerapps-helloworld:latest"
       cpu    = 0.5
       memory = "1Gi"
 
