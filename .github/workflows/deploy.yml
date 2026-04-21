@@ -102,9 +102,10 @@ jobs:
           ACR_PASSWORD=$(az acr credential show --name ${{ secrets.TF_VAR_ACR_NAME }} --resource-group ${{ secrets.TF_VAR_RESOURCE_GROUP_NAME }} --query 'passwords[0].value' -o tsv)
           BACKEND_URL=https://$(az containerapp show --name ca-admission-dev --resource-group ${{ secrets.TF_VAR_RESOURCE_GROUP_NAME }} --query properties.configuration.ingress.fqdn -o tsv)
 
-          echo "ACR Server: $ACR_SERVER"
-          echo "ACR Username: $ACR_USERNAME"
-          echo "Backend URL: $BACKEND_URL"
+          # Fallback — ACR admin username is always the ACR name
+          if [ -z "$ACR_USERNAME" ]; then
+            ACR_USERNAME="${{ secrets.TF_VAR_ACR_NAME }}"
+          fi
 
           echo "acr_login_server=$ACR_SERVER"     >> $GITHUB_OUTPUT
           echo "acr_admin_username=$ACR_USERNAME" >> $GITHUB_OUTPUT
