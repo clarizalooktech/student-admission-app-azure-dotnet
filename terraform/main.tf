@@ -21,21 +21,13 @@ provider "azurerm" {
   subscription_id = var.subscription_id
 }
 
-data "azurerm_resource_group" "existing" {
-  count = var.create_infrastructure ? 0 : 1
-  name  = var.resource_group_name
-}
-
-resource "azurerm_resource_group" "main" {
-  count    = var.create_infrastructure ? 1 : 0
-  name     = var.resource_group_name
-  location = var.location
-  tags     = local.tags
+data "azurerm_resource_group" "main" {
+  name = var.resource_group_name
 }
 
 locals {
-  resource_group_name     = var.create_infrastructure ? azurerm_resource_group.main[0].name : data.azurerm_resource_group.existing[0].name
-  resource_group_location = var.create_infrastructure ? azurerm_resource_group.main[0].location : data.azurerm_resource_group.existing[0].location
+  resource_group_name     = data.azurerm_resource_group.main.name
+  resource_group_location = data.azurerm_resource_group.main.location
 
   tags = {
     project     = var.app_name

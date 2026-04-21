@@ -49,10 +49,3 @@ variable "openai_model" {
   type        = string
   default     = "gpt-4o"
 }
-
-# ── Infrastructure creation flag (same pattern as glucose monitor) ─────────
-variable "create_infrastructure" {
-  description = "Set to true on first deploy to create RG and ACR. False on subsequent runs."
-  type        = bool
-  default     = true
-}
