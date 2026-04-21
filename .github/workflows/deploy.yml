@@ -159,7 +159,7 @@ jobs:
       - name: Deploy to Container Apps
         uses: azure/container-apps-deploy-action@v1
         with:
-          acrName:          ${{ steps.acr.outputs.server }}
+          acrName:          ${{ secrets.TF_VAR_ACR_NAME }}
           containerAppName: ca-admission-dev
           resourceGroup:    ${{ secrets.TF_VAR_RESOURCE_GROUP_NAME }}
           imageToDeploy:    ${{ steps.acr.outputs.server }}/${{ env.IMAGE_NAME }}:${{ steps.sha.outputs.short }}
