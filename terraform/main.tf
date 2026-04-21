@@ -21,13 +21,15 @@ provider "azurerm" {
   subscription_id = var.subscription_id
 }
 
-data "azurerm_resource_group" "main" {
-  name = var.resource_group_name
+resource "azurerm_resource_group" "main" {
+  name     = var.resource_group_name
+  location = var.location
+  tags     = local.tags
 }
 
 locals {
-  resource_group_name     = data.azurerm_resource_group.main.name
-  resource_group_location = data.azurerm_resource_group.main.location
+  resource_group_name     = azurerm_resource_group.main.name
+  resource_group_location = azurerm_resource_group.main.location
 
   tags = {
     project     = var.app_name
