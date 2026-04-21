@@ -1,7 +1,5 @@
 # Student Admission — AI Agent Demo
 
-A talk demo for **"DevOps thinking for production AI agents"**.
-
 React frontend + .NET 8 AI agent backend + GitHub Actions CI/CD + Terraform on Azure.
 
 ---

@@ -1,15 +1,13 @@
-# ── Container Apps environment ────────────────────────────────────────────────
 resource "azurerm_container_app_environment" "main" {
-  name                       = "${var.app_name}-cae-${var.environment}"
+  name                       = "cae-admission-dev"
   resource_group_name        = local.resource_group_name
   location                   = local.resource_group_location
   log_analytics_workspace_id = azurerm_log_analytics_workspace.main.id
   tags                       = local.tags
 }
 
-# ── Container App — .NET backend ──────────────────────────────────────────────
 resource "azurerm_container_app" "backend" {
-  name                         = "${var.app_name}-backend-${var.environment}"
+  name                         = "ca-admission-dev"
   container_app_environment_id = azurerm_container_app_environment.main.id
   resource_group_name          = local.resource_group_name
   revision_mode                = "Single"
@@ -35,7 +33,7 @@ resource "azurerm_container_app" "backend" {
   }
 
   template {
-    min_replicas = 0   # scales to zero — $0 cost when idle
+    min_replicas = 0
     max_replicas = 3
 
     container {
