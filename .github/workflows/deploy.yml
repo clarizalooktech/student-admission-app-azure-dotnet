@@ -155,8 +155,6 @@ jobs:
           tags: |
             ${{ steps.acr.outputs.server }}/${{ env.IMAGE_NAME }}:${{ steps.sha.outputs.short }}
             ${{ steps.acr.outputs.server }}/${{ env.IMAGE_NAME }}:latest
-          cache-from: type=gha
-          cache-to:   type=gha,mode=max
 
       - name: Deploy to Container Apps
         uses: azure/container-apps-deploy-action@v1
