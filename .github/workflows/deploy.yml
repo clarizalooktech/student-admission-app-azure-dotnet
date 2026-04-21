@@ -74,20 +74,16 @@ jobs:
         with:
           creds: ${{ secrets.AZURE_CREDENTIALS }}
 
-      - name: Check if resource group exists
+      - name: Check if resource group and ACR exist
         id: check
         run: |
           RG_NAME="${{ secrets.TF_VAR_RESOURCE_GROUP_NAME }}"
           ACR_NAME="${{ secrets.TF_VAR_ACR_NAME }}"
-
           RG_EXISTS=$(az group show --name "$RG_NAME" --query name 2>/dev/null || echo "NotFound")
           ACR_EXISTS=$(az acr show --name "$ACR_NAME" --query name 2>/dev/null || echo "NotFound")
-
           if [ "$RG_EXISTS" = "NotFound" ] || [ "$ACR_EXISTS" = "NotFound" ]; then
-            echo "Infrastructure incomplete — will create"
             echo "create_infrastructure=true" >> $GITHUB_OUTPUT
           else
-            echo "Infrastructure exists — skipping creation"
             echo "create_infrastructure=false" >> $GITHUB_OUTPUT
           fi
 
@@ -96,7 +92,7 @@ jobs:
         with:
           terraform_version: ${{ env.TF_VERSION }}
           cli_config_credentials_token: ${{ secrets.TF_API_TOKEN }}
-          terraform_wrapper: false   # needed so terraform output works cleanly
+          terraform_wrapper: false
 
       - name: Terraform init
         working-directory: ${{ env.TF_WORKING_DIR }}
@@ -106,19 +102,8 @@ jobs:
         working-directory: ${{ env.TF_WORKING_DIR }}
         run: terraform validate
 
-      - name: Terraform plan
-        working-directory: ${{ env.TF_WORKING_DIR }}
-        run: |
-          terraform plan \
-            -var="subscription_id=${{ secrets.ARM_SUBSCRIPTION_ID }}" \
-            -var="resource_group_name=${{ secrets.TF_VAR_RESOURCE_GROUP_NAME }}" \
-            -var="acr_name=${{ secrets.TF_VAR_ACR_NAME }}" \
-            -var="openai_endpoint=${{ secrets.OPENAI_ENDPOINT }}" \
-            -var="openai_api_key=${{ secrets.OPENAI_API_KEY }}" \
-            -var="create_infrastructure=${{ steps.check.outputs.create_infrastructure }}" \
-            -out=tfplan
-
-      - name: Import existing resource group
+      # ── Import BEFORE plan so state is up to date ──
+      - name: Import existing resource group if exists
         working-directory: ${{ env.TF_WORKING_DIR }}
         continue-on-error: true
         run: |
@@ -132,11 +117,23 @@ jobs:
             azurerm_resource_group.main[0] \
             /subscriptions/9e79deeb-336d-4397-86e1-b1601bbd0240/resourceGroups/student-admission-app-rg
 
+      # ── Plan AFTER import so it uses updated state ──
+      - name: Terraform plan
+        working-directory: ${{ env.TF_WORKING_DIR }}
+        run: |
+          terraform plan \
+            -var="subscription_id=${{ secrets.ARM_SUBSCRIPTION_ID }}" \
+            -var="resource_group_name=${{ secrets.TF_VAR_RESOURCE_GROUP_NAME }}" \
+            -var="acr_name=${{ secrets.TF_VAR_ACR_NAME }}" \
+            -var="openai_endpoint=${{ secrets.OPENAI_ENDPOINT }}" \
+            -var="openai_api_key=${{ secrets.OPENAI_API_KEY }}" \
+            -var="create_infrastructure=true" \
+            -out=tfplan
+
       - name: Terraform apply
         working-directory: ${{ env.TF_WORKING_DIR }}
         run: terraform apply -auto-approve tfplan
 
-      # Capture outputs and pass to next job — glucose monitor pattern
       - name: Get Terraform outputs
         id: tf-outputs
         working-directory: ${{ env.TF_WORKING_DIR }}
