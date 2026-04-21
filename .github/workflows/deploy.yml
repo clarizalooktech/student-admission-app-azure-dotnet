@@ -97,9 +97,9 @@ jobs:
       - name: Get ACR and deployment outputs
         id: tf-outputs
         run: |
-          echo "acr_login_server=$(az acr show --name ${{ secrets.TF_VAR_ACR_NAME }} --query loginServer -o tsv)"           >> $GITHUB_OUTPUT
-          echo "acr_admin_username=$(az acr credential show --name ${{ secrets.TF_VAR_ACR_NAME }} --query username -o tsv)" >> $GITHUB_OUTPUT
-          echo "acr_admin_password=$(az acr credential show --name ${{ secrets.TF_VAR_ACR_NAME }} --query passwords[0].value -o tsv)" >> $GITHUB_OUTPUT
+          echo "acr_login_server=$(az acr show --name ${{ secrets.TF_VAR_ACR_NAME }} --resource-group ${{ secrets.TF_VAR_RESOURCE_GROUP_NAME }} --query loginServer -o tsv)" >> $GITHUB_OUTPUT
+          echo "acr_admin_username=$(az acr credential show --name ${{ secrets.TF_VAR_ACR_NAME }} --resource-group ${{ secrets.TF_VAR_RESOURCE_GROUP_NAME }} --query username -o tsv)" >> $GITHUB_OUTPUT
+          echo "acr_admin_password=$(az acr credential show --name ${{ secrets.TF_VAR_ACR_NAME }} --resource-group ${{ secrets.TF_VAR_RESOURCE_GROUP_NAME }} --query 'passwords[0].value' -o tsv)" >> $GITHUB_OUTPUT
           echo "backend_url=https://$(az containerapp show --name ca-admission-dev --resource-group ${{ secrets.TF_VAR_RESOURCE_GROUP_NAME }} --query properties.configuration.ingress.fqdn -o tsv)" >> $GITHUB_OUTPUT
           echo "resource_group=${{ secrets.TF_VAR_RESOURCE_GROUP_NAME }}" >> $GITHUB_OUTPUT
 
