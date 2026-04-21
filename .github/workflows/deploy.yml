@@ -89,21 +89,19 @@ jobs:
             -var="openai_endpoint=${{ secrets.OPENAI_ENDPOINT }}" \
             -var="openai_api_key=${{ secrets.OPENAI_API_KEY }}"
 
-      - name: Get Terraform outputs
+      - name: Log in to Azure
+        uses: azure/login@v2
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Get ACR and deployment outputs
         id: tf-outputs
-        working-directory: ${{ env.TF_WORKING_DIR }}
         run: |
-          terraform refresh \
-            -var="subscription_id=${{ secrets.ARM_SUBSCRIPTION_ID }}" \
-            -var="resource_group_name=${{ secrets.TF_VAR_RESOURCE_GROUP_NAME }}" \
-            -var="acr_name=${{ secrets.TF_VAR_ACR_NAME }}" \
-            -var="openai_endpoint=${{ secrets.OPENAI_ENDPOINT }}" \
-            -var="openai_api_key=${{ secrets.OPENAI_API_KEY }}"
-          echo "acr_login_server=$(terraform output -raw acr_login_server)"     >> $GITHUB_OUTPUT
-          echo "acr_admin_username=$(terraform output -raw acr_admin_username)" >> $GITHUB_OUTPUT
-          echo "acr_admin_password=$(terraform output -raw acr_admin_password)" >> $GITHUB_OUTPUT
-          echo "backend_url=$(terraform output -raw backend_url)"               >> $GITHUB_OUTPUT
-          echo "resource_group=$(terraform output -raw resource_group_name)"    >> $GITHUB_OUTPUT
+          echo "acr_login_server=$(az acr show --name ${{ secrets.TF_VAR_ACR_NAME }} --query loginServer -o tsv)"           >> $GITHUB_OUTPUT
+          echo "acr_admin_username=$(az acr credential show --name ${{ secrets.TF_VAR_ACR_NAME }} --query username -o tsv)" >> $GITHUB_OUTPUT
+          echo "acr_admin_password=$(az acr credential show --name ${{ secrets.TF_VAR_ACR_NAME }} --query passwords[0].value -o tsv)" >> $GITHUB_OUTPUT
+          echo "backend_url=https://$(az containerapp show --name ca-admission-dev --resource-group ${{ secrets.TF_VAR_RESOURCE_GROUP_NAME }} --query properties.configuration.ingress.fqdn -o tsv)" >> $GITHUB_OUTPUT
+          echo "resource_group=${{ secrets.TF_VAR_RESOURCE_GROUP_NAME }}" >> $GITHUB_OUTPUT
 
   build-and-deploy:
     name: Push image & deploy
