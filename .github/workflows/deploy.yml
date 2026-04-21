@@ -32,10 +32,10 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4.2.2
 
       - name: Set up .NET
-        uses: actions/setup-dotnet@v4
+        uses: actions/setup-dotnet@v4.3.1
         with:
           dotnet-version: ${{ env.DOTNET_VERSION }}
 
@@ -145,7 +145,7 @@ jobs:
         uses: azure/container-apps-deploy-action@v1
         with:
           acrName:          ${{ needs.setup-infra.outputs.acr_login_server }}
-          containerAppName: student-admission-app-azure-dotnet-backend-dev
+          containerAppName: ca-admission-dev
           resourceGroup:    ${{ needs.setup-infra.outputs.resource_group }}
           imageToDeploy:    ${{ needs.setup-infra.outputs.acr_login_server }}/${{ env.IMAGE_NAME }}:${{ steps.sha.outputs.short }}
 
