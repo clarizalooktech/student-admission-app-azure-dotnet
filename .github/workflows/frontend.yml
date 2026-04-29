@@ -1,19 +1,46 @@
-name: Frontend — local only
+name: Frontend — build & deploy to Azure Blob Storage
 
 on:
   push:
     branches: [main]
     paths:
       - 'frontend/**'
+      - '.github/workflows/frontend.yml'
+
+env:
+  ARM_CLIENT_ID:       ${{ secrets.ARM_CLIENT_ID }}
+  ARM_CLIENT_SECRET:   ${{ secrets.ARM_CLIENT_SECRET }}
+  ARM_TENANT_ID:       ${{ secrets.ARM_TENANT_ID }}
+  ARM_SUBSCRIPTION_ID: ${{ secrets.ARM_SUBSCRIPTION_ID }}
 
 jobs:
-  notice:
-    name: Frontend info
+  deploy-frontend:
+    name: Deploy frontend to Blob Storage
     runs-on: ubuntu-latest
+
     steps:
-      - name: Frontend runs locally
+      - uses: actions/checkout@v4
+
+      - name: Log in to Azure
+        uses: azure/login@v2
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Write backend URL into config.json
         run: |
-          echo "Frontend is served locally for the demo"
-          echo "Open frontend/index.html in your browser"
-          echo "Make sure config.json points to the live backend:"
-          echo "https://ca-admission-dev.mangodune-bf8f3f1e.australiaeast.azurecontainerapps.io"
+          echo '{ "apiBase": "${{ secrets.BACKEND_URL }}" }' > frontend/config.json
+
+      - name: Upload frontend to Blob Storage
+        run: |
+          az storage blob upload-batch \
+            --account-name stadmissionfrontend \
+            --destination '$web' \
+            --source frontend/ \
+            --overwrite true
+
+      - name: Get frontend URL
+        run: |
+          echo "Frontend URL: $(az storage account show \
+            --name stadmissionfrontend \
+            --resource-group ${{ secrets.TF_VAR_RESOURCE_GROUP_NAME }} \
+            --query primaryEndpoints.web -o tsv)"

@@ -35,3 +35,19 @@ output "resource_group_name" {
   description = "Resource group name"
   value       = local.resource_group_name
 }
+
+output "frontend_url" {
+  description = "Public URL of the frontend static website"
+  value       = azurerm_storage_account.frontend.primary_web_endpoint
+}
+
+output "frontend_storage_account" {
+  description = "Storage account name for frontend deployment"
+  value       = azurerm_storage_account.frontend.name
+}
+
+output "frontend_storage_key" {
+  description = "Storage account key for frontend deployment"
+  value       = azurerm_storage_account.frontend.primary_access_key
+  sensitive   = true
+}
