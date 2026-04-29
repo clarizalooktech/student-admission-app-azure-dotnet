@@ -53,7 +53,7 @@ student-admission-app-azure-dotnet/
 ## Architecture
 
 ```
-Student (browser — localhost:3000)
+Student (browser)
     │  HTTPS
     ▼
 frontend/index.html            ← React
