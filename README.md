@@ -11,14 +11,13 @@ student-admission-app-azure-dotnet/
 │
 ├── .github/
 │   └── workflows/
-│       ├── terraform.yml     # infra plan → apply (with create_infrastructure check)
-│       ├── backend.yml       # build → push to ACR → deploy to Container Apps
-│       └── frontend.yml      # inject API URL → deploy to Static Web Apps
+│       ├── deploy.yml        # build → Terraform → push image → deploy to Container Apps
+│       └── frontend.yml      # frontend runs locally (Azure Student subscription limitation)
 │
 ├── frontend/
-│   ├── index.html            # React entry (CDN, no build step needed)
+│   ├── index.html            # React app (all inlined, no build step needed)
+│   ├── config.json           # backend URL config (overwritten at deploy time)
 │   └── src/
-│       ├── App.jsx           # 4-step wizard + live AI agent result panel
 │       └── styles.css
 │
 ├── backend/
@@ -35,15 +34,16 @@ student-admission-app-azure-dotnet/
 │       └── AdmissionAgent.csproj
 │
 ├── terraform/
-│   ├── main.tf                    # provider, Terraform Cloud backend, resource group
-│   ├── variables.tf               # all inputs incl. create_infrastructure flag
-│   ├── acr.tf                     # Azure Container Registry (conditional create)
-│   ├── monitoring.tf              # Log Analytics + App Insights
-│   ├── container-apps.tf          # Container Apps environment + backend app
-│   ├── frontend.tf                # Azure Static Web App
-│   ├── outputs.tf                 # URLs + tokens needed by GitHub Actions
-│   └── terraform.tfvars.example   # safe to commit — fill in and rename to .tfvars
+│   ├── main.tf               # provider, Terraform Cloud backend, resource group
+│   ├── variables.tf          # all inputs
+│   ├── acr.tf                # Azure Container Registry
+│   ├── monitoring.tf         # Log Analytics + App Insights
+│   ├── container-apps.tf     # Container Apps environment + backend app
+│   ├── frontend.tf           # placeholder (SWA not supported on Student subscription)
+│   ├── outputs.tf            # ACR creds, backend URL
+│   └── terraform.tfvars.example
 │
+├── .gitattributes
 ├── .gitignore
 └── README.md
 ```
@@ -53,30 +53,31 @@ student-admission-app-azure-dotnet/
 ## Architecture
 
 ```
-Student (browser)
+Student (browser — localhost:3000)
     │  HTTPS
     ▼
-Azure Static Web Apps          ← React wizard (4 steps)
+frontend/index.html            ← React
     │  REST API call
     ▼
-Azure Container Apps           ← .NET 8 Web API (containerised)
+Azure Container Apps           ← .NET 8 Web API (ca-admission-dev)
     │
     ├── AI Agent loop
-    │     Planner        → GPT-4o mini decides which tools to call
+    │     Planner        → GPT-4o decides which tools to call
     │     Tool Executor  → validate docs, check eligibility, score application
-    │     Synthesiser    → GPT-4o mini writes the human-readable decision
+    │     Synthesiser    → GPT-4o writes the human-readable decision
     │
-    ├── Azure OpenAI (gpt-4o-mini)
+    ├── Azure OpenAI (gpt-4o, australiaeast)
     ├── App Insights     ← traces + exceptions
     └── Prometheus /metrics ← agent step counters, duration histograms
 ```
 
 **CI/CD flow:**
 ```
-git push → GitHub Actions
-    ├── terraform.yml  → Terraform Cloud → provisions Azure infra
-    ├── backend.yml    → ACR build/push → Container Apps deploy → health check
-    └── frontend.yml   → inject backend URL → Azure Static Web Apps deploy
+git push → GitHub Actions (deploy.yml)
+    ├── Job 1: Build & test     → dotnet build
+    ├── Job 2: Terraform        → provisions Azure infra
+    │          ↓ passes ACR creds directly to Job 3
+    └── Job 3: Push & deploy    → docker build → ACR → Container Apps → health check
 ```
 
 ---
@@ -89,94 +90,49 @@ git push → GitHub Actions
 - [Azure CLI](https://docs.microsoft.com/en-us/cli/azure/install-azure-cli) — `az login`
 - A [Terraform Cloud](https://app.terraform.io) account (free)
 - An Azure subscription
-- An Azure OpenAI resource with `gpt-4o-mini` deployed
+- An Azure OpenAI resource with `gpt-4o` deployed in `australiaeast`
 
 ---
 
-## Step 1 — Provision infrastructure with Terraform
+## Step 1 — Create Azure OpenAI resource
 
 ```bash
-cd terraform
+# Create the resource
+az cognitiveservices account create \
+  --name "openai-student-admission" \
+  --resource-group "student-admission-app-rg" \
+  --location "australiaeast" \
+  --kind "OpenAI" \
+  --sku "S0"
 
-# Copy and fill in your real values
-cp terraform.tfvars.example terraform.tfvars
-# Edit terraform.tfvars — set subscription_id, openai_endpoint, openai_api_key etc.
+# Deploy the model
+az cognitiveservices account deployment create \
+  --name "openai-student-admission" \
+  --resource-group "student-admission-app-rg" \
+  --deployment-name "gpt-4o" \
+  --model-name "gpt-4o" \
+  --model-version "2024-11-20" \
+  --model-format "OpenAI" \
+  --sku-capacity 10 \
+  --sku-name "GlobalStandard"
 
-# Connect to Terraform Cloud
-terraform login
+# Get endpoint and key
+az cognitiveservices account show \
+  --name "openai-student-admission" \
+  --resource-group "student-admission-app-rg" \
+  --query "properties.endpoint" -o tsv
 
-# Initialise (downloads providers, connects to TF Cloud workspace)
-terraform init
-
-# Preview what will be created
-terraform plan
-
-# Create everything in Azure
-terraform apply
+az cognitiveservices account keys list \
+  --name "openai-student-admission" \
+  --resource-group "student-admission-app-rg" \
+  --query "key1" -o tsv
 ```
-
-**What Terraform creates:**
-- Resource group
-- Azure Container Registry (ACR)
-- Log Analytics workspace
-- Application Insights
-- Container Apps environment
-- Container App (backend, scales to zero)
-- Azure Static Web App (frontend, free tier)
-
-After apply, grab the outputs you'll need for GitHub secrets:
-
-```bash
-terraform output -raw acr_login_server
-terraform output -raw acr_admin_username
-terraform output -raw acr_admin_password
-terraform output -raw backend_url
-terraform output -raw frontend_deployment_token
-terraform output -raw app_insights_connection_string
-```
-
-> On subsequent runs, Terraform checks if the resource group already exists and sets
-> `create_infrastructure=false` automatically — so it won't try to recreate existing resources.
 
 ---
 
-## Step 2 — Run locally
+## Step 2 — GitHub secrets
 
-### Backend
-
-```bash
-cd backend/src/AdmissionAgent
-
-# Store secrets safely (never commit these)
-dotnet user-secrets set "AZURE_OPENAI_ENDPOINT" "https://YOUR-RESOURCE.openai.azure.com/"
-dotnet user-secrets set "AZURE_OPENAI_KEY"      "YOUR-KEY"
-dotnet user-secrets set "AZURE_OPENAI_MODEL"    "gpt-4o-mini"
-
-dotnet run
-# → API:      http://localhost:5000/api/admission/evaluate
-# → Health:   http://localhost:5000/api/admission/health
-# → Metrics:  http://localhost:5000/metrics  (Prometheus)
-```
-
-### Frontend
-
-```bash
-cd frontend
-# No build step needed — just open in a browser
-open index.html
-
-# Or serve with any static server
-npx serve .
-```
-
-> The frontend points to `http://localhost:5000` when running locally.
-> Update `API_BASE` in `src/App.jsx` before deploying to point to your Container App URL.
-
----
-
-## Step 3 — Set up GitHub Actions
-
-Add these secrets to your repo under **Settings → Secrets and variables → Actions**:
+Add these to your repo under **Settings → Secrets and variables → Actions**:
 
 | Secret | Where to get it |
 |--------|----------------|
@@ -185,53 +141,111 @@ Add these secrets to your repo under **Settings → Secrets and variables → Ac
 | `ARM_CLIENT_SECRET` | same command |
 | `ARM_TENANT_ID` | same command |
 | `ARM_SUBSCRIPTION_ID` | `az account show --query id` |
-| `AZURE_CREDENTIALS` | `az ad sp create-for-rbac --sdk-auth` (full JSON) |
-| `TF_VAR_RESOURCE_GROUP_NAME` | e.g. `student-admission-app-azure-dotnet-rg` |
-| `TF_VAR_ACR_NAME` | e.g. `acradmissiondemo` |
-| `OPENAI_ENDPOINT` | Your Azure OpenAI endpoint URL |
-| `OPENAI_API_KEY` | Your Azure OpenAI key |
-| `AZURE_STATIC_WEB_APPS_API_TOKEN` | Terraform output `frontend_deployment_token` — add after first apply |
-| `BACKEND_URL` | Terraform output `backend_url` — add after first apply |
+| `AZURE_CREDENTIALS` | `az ad sp create-for-rbac --json-auth` (full JSON) |
+| `TF_VAR_RESOURCE_GROUP_NAME` | `student-admission-app-rg` |
+| `TF_VAR_ACR_NAME` | `acrstudentadmission` |
+| `OPENAI_ENDPOINT` | Azure OpenAI endpoint URL |
+| `OPENAI_API_KEY` | Azure OpenAI Key 1 |
 
-> `ACR_LOGIN_SERVER`, `ACR_USERNAME`, and `ACR_PASSWORD` are **not needed** as secrets.
-> `deploy.yml` runs Terraform first then passes ACR credentials directly to the
-> Docker build job via job outputs — same pattern as the glucose monitor app.
+> `ACR_LOGIN_SERVER`, `ACR_USERNAME`, and `ACR_PASSWORD` are NOT needed as secrets.
+> The deploy.yml pipeline fetches ACR credentials directly from Azure CLI after Terraform runs.
 
-Create an Azure service principal for GitHub Actions:
+Create service principal:
 
 ```bash
+export MSYS_NO_PATHCONV=1
 az ad sp create-for-rbac \
-  --name "sp-student-admission-app-azure-dotnet-github" \
+  --name "sp-student-admission-github" \
   --role contributor \
-  --scopes /subscriptions/YOUR_SUBSCRIPTION_ID \
-  --sdk-auth
+  --scopes "/subscriptions/YOUR_SUBSCRIPTION_ID" \
+  --json-auth
 ```
-
-Once secrets are added, push to `main` — the pipelines run automatically:
-
-```bash
-git add .
-git commit -m "initial commit"
-git push origin main
-```
-
-**Pipeline order on first push:**
-1. `terraform.yml` — provisions all Azure resources
-2. `backend.yml` — builds Docker image, pushes to ACR, deploys to Container Apps
-3. `frontend.yml` — deploys React to Static Web Apps
 
 ---
 
-## Step 4 — Observability
+## Step 3 — Terraform Cloud setup
+
+1. Create account at [app.terraform.io](https://app.terraform.io)
+2. Create organisation e.g. `clarizalooktech`
+3. Create workspace: `student-admission-app-azure-dotnet` → API-driven → Auto apply
+4. Create Variable Set `azure-credentials` with these environment variables:
+   - `ARM_CLIENT_ID`
+   - `ARM_CLIENT_SECRET`
+   - `ARM_TENANT_ID`
+   - `ARM_SUBSCRIPTION_ID`
+5. Apply variable set to all workspaces
+
+Update `terraform/main.tf` with your org name:
+```hcl
+cloud {
+  organization = "clarizalooktech"
+  workspaces {
+    name = "student-admission-app-azure-dotnet"
+  }
+}
+```
+
+---
+
+## Step 4 — Deploy
+
+```bash
+git push origin main
+```
+
+Watch **GitHub Actions → deploy.yml** — three jobs run in sequence:
+```
+✅ Build & test
+✅ Terraform — provision infra
+✅ Push image & deploy
+```
+
+---
+
+## Step 5 — Run frontend locally
+
+```bash
+# Update config.json with your Container App URL
+# frontend/config.json:
+# { "apiBase": "https://ca-admission-dev.YOUR-ENV.australiaeast.azurecontainerapps.io" }
+
+cd frontend
+npx serve .
+# Open http://localhost:3000
+```
+
+---
+
+## Step 6 — Update Container App with OpenAI key
+
+After creating the OpenAI resource, update the Container App:
+
+**portal.azure.com → ca-admission-dev → Containers → Environment variables**
+
+Update:
+- `AZURE_OPENAI_KEY` → your Key 1
+- `AZURE_OPENAI_ENDPOINT` → your endpoint URL
+
+Or via CLI:
+
+```bash
+az containerapp update \
+  --name ca-admission-dev \
+  --resource-group student-admission-app-rg \
+  --set-env-vars \
+    AZURE_OPENAI_ENDPOINT=https://openai-student-admission.openai.azure.com/ \
+    AZURE_OPENAI_MODEL=gpt-4o
+```
+
+---
+
+## Observability
 
 | Signal | Tool | How to access |
 |--------|------|--------------|
 | Request traces + exceptions | App Insights | Azure Portal → App Insights → Transaction search |
 | Agent step metrics | Prometheus | `GET /metrics` on the Container App |
-| Dashboards | Grafana | Connect to Prometheus endpoint |
 | Decision logs | App Insights Logs | KQL query below |
-
-Useful KQL in App Insights → Logs:
 
 ```kql
 traces
@@ -240,51 +254,25 @@ traces
 | order by timestamp desc
 ```
 
-```kql
-traces
-| where message contains "Starting evaluation"
-| project timestamp, message
-| order by timestamp desc
+## Tear down
+
+```bash
+terraform -chdir=terraform destroy
+```
+
+Removes all Terraform-managed resources. The OpenAI resource (created separately via CLI) needs to be deleted manually:
+
+```bash
+az cognitiveservices account delete \
+  --name "openai-student-admission" \
+  --resource-group "student-admission-app-rg"
 ```
 
 ---
 
-## Cost estimate
+## Notes
 
-All resources are optimised for demo/dev cost:
-
-| Resource | Cost |
-|----------|------|
-| Container Apps (scales to zero) | ~$0 when idle |
-| Static Web Apps (free tier) | $0 |
-| ACR (Basic) | ~$5/month |
-| Log Analytics | ~$2/month (30-day retention) |
-| App Insights | Free up to 5GB/month |
-| gpt-4o-mini | $0.15/1M input tokens — 100 demo calls ≈ $0.01 |
-
----
-
-## Key files explained
-
-| File | Purpose |
-|------|---------|
-| `frontend/src/App.jsx` | Full React wizard — 4 steps + live agent status panel |
-| `backend/src/AdmissionAgent/Services/AgentService.cs` | The AI agent loop: Planner, Tool Executor, Synthesiser |
-| `backend/src/AdmissionAgent/Controllers/AdmissionController.cs` | Single POST endpoint that triggers the agent |
-| `backend/src/AdmissionAgent/Program.cs` | App Insights + Prometheus wiring |
-| `terraform/main.tf` | Provider config + Terraform Cloud backend |
-| `terraform/acr.tf` | ACR with conditional create (glucose monitor pattern) |
-| `terraform/variables.tf` | All inputs including `create_infrastructure` flag |
-| `terraform/terraform.tfvars.example` | Template — copy to `.tfvars`, never commit real values |
-| `.github/workflows/terraform.yml` | Checks if RG exists → plan → manual approve → apply |
-| `.github/workflows/backend.yml` | Build → push image (SHA tag) → deploy → health check |
-| `.github/workflows/frontend.yml` | Inject backend URL → deploy to Static Web Apps |
-
----
-
-## Secrets best practice (same as glucose monitor)
-
-- `terraform.tfvars` is in `.gitignore` — never committed
-- `terraform.tfvars.example` is committed — safe to show on screen
-- OpenAI keys are passed as Container App secrets, not plain env vars
-- GitHub Actions uses a service principal with contributor scope only
+- Azure Static Web Apps is not supported on Azure for Students subscription — frontend runs locally
+- Container App name `ca-admission-dev` is hardcoded (Azure 32-char limit)
+- ACR admin credentials are fetched via Azure CLI in the pipeline — no manual secret setup needed
+- Terraform state lives in Terraform Cloud (free tier)
