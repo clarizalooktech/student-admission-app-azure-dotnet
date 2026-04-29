@@ -61,7 +61,8 @@ jobs:
             --account-name stadmissionfrontend \
             --destination '$web' \
             --source frontend/ \
-            --overwrite true
+            --overwrite true \
+            --auth-mode login
 
       - name: Get frontend URL
         run: |
