@@ -30,6 +30,31 @@ jobs:
         run: |
           echo '{ "apiBase": "${{ secrets.BACKEND_URL }}" }' > frontend/config.json
 
+      - name: Ensure storage account exists
+        run: |
+          EXISTS=$(az storage account show \
+            --name stadmissionfrontend \
+            --resource-group ${{ secrets.TF_VAR_RESOURCE_GROUP_NAME }} \
+            --query name -o tsv 2>/dev/null || echo "NotFound")
+
+          if [ "$EXISTS" = "NotFound" ]; then
+            echo "Creating storage account..."
+            az storage account create \
+              --name stadmissionfrontend \
+              --resource-group ${{ secrets.TF_VAR_RESOURCE_GROUP_NAME }} \
+              --location australiaeast \
+              --sku Standard_LRS \
+              --allow-blob-public-access true
+
+            az storage blob service-properties update \
+              --account-name stadmissionfrontend \
+              --static-website \
+              --index-document index.html \
+              --404-document index.html
+          else
+            echo "Storage account already exists"
+          fi
+
       - name: Upload frontend to Blob Storage
         run: |
           az storage blob upload-batch \
