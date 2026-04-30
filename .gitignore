@@ -20,3 +20,9 @@ dist/
 .env
 .env.local
 *.env
+
+# .NET build output
+backend/bin/
+backend/obj/
+backend/**/bin/
+backend/**/obj/
