@@ -49,3 +49,4 @@ variable "openai_model" {
   type        = string
   default     = "gpt-4o"
 }
+
