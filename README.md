@@ -92,16 +92,25 @@ git push → GitHub Actions (deploy.yml)
 - An Azure subscription
 - An Azure OpenAI resource with `gpt-4o` deployed in `australiaeast`
 
+> **Important:** Before running any `az` commands, ensure your CLI is pointed at the correct subscription:
+> ```bash
+> az account set --subscription "YOUR_SUBSCRIPTION_ID"
+> az account show  # verify
+> ```
+
 ---
 
 ## Step 1 — Create Azure OpenAI resource
 
+> Skip `az group create` if the resource group already exists.
+
 ```bash
-# Create the resource
+# Create resource group (skip if it already exists)
 az group create \
   --name "student-admission-app-rg" \
   --location "australiaeast"
-  
+
+# Create the OpenAI resource
 az cognitiveservices account create \
   --name "openai-student-admission" \
   --resource-group "student-admission-app-rg" \
@@ -140,19 +149,20 @@ Add these to your repo under **Settings → Secrets and variables → Actions**:
 
 | Secret | Where to get it |
 |--------|----------------|
-| `TF_API_TOKEN` | Terraform Cloud → User Settings → Tokens |
-| `ARM_CLIENT_ID` | `az ad sp create-for-rbac` output |
-| `ARM_CLIENT_SECRET` | same command |
-| `ARM_TENANT_ID` | same command |
-| `ARM_SUBSCRIPTION_ID` | `az account show --query id` |
-| `AZURE_CREDENTIALS` | `az ad sp create-for-rbac --json-auth` (full JSON) |
-| `TF_VAR_RESOURCE_GROUP_NAME` | `student-admission-app-rg` |
-| `TF_VAR_ACR_NAME` | `acrstudentadmission` |
-| `OPENAI_ENDPOINT` | Azure OpenAI endpoint URL |
-| `OPENAI_API_KEY` | Azure OpenAI Key 1 |
+| `TF_API_TOKEN` | Terraform Cloud → User Settings → Tokens (create a User token) |
+| `ARM_CLIENT_ID` | `clientId` field from `az ad sp create-for-rbac` output |
+| `ARM_CLIENT_SECRET` | `clientSecret` field from same command |
+| `ARM_TENANT_ID` | `tenantId` field from same command |
+| `ARM_SUBSCRIPTION_ID` | `subscriptionId` field from same command, or `az account show --query id` |
+| `AZURE_CREDENTIALS` | the full JSON output from `az ad sp create-for-rbac --json-auth` |
+| `TF_VAR_subscription_id` | same as `ARM_SUBSCRIPTION_ID` |
+| `TF_VAR_openai_endpoint` | Azure OpenAI endpoint URL (from Step 1) |
+| `TF_VAR_openai_api_key` | Azure OpenAI Key 1 (from Step 1) |
 
-> `ACR_LOGIN_SERVER`, `ACR_USERNAME`, and `ACR_PASSWORD` are NOT needed as secrets.
-> The deploy.yml pipeline fetches ACR credentials directly from Azure CLI after Terraform runs.
+> `ACR_LOGIN_SERVER`, `ACR_USERNAME`, and `ACR_PASSWORD` are NOT needed as secrets —
+> the pipeline fetches ACR credentials directly from Azure CLI after Terraform runs.
+>
+> `TF_VAR_resource_group_name` and `TF_VAR_acr_name` are NOT needed — defaults are set in `variables.tf`.
 
 Create service principal:
 
@@ -165,6 +175,19 @@ az ad sp create-for-rbac \
   --json-auth
 ```
 
+The output JSON maps to secrets as follows:
+
+```json
+{
+  "clientId":       "→ ARM_CLIENT_ID",
+  "clientSecret":   "→ ARM_CLIENT_SECRET",
+  "subscriptionId": "→ ARM_SUBSCRIPTION_ID and TF_VAR_subscription_id",
+  "tenantId":       "→ ARM_TENANT_ID"
+}
+```
+
+The entire JSON blob is `AZURE_CREDENTIALS`.
+
 ---
 
 ## Step 3 — Terraform Cloud setup
@@ -172,7 +195,7 @@ az ad sp create-for-rbac \
 1. Create account at [app.terraform.io](https://app.terraform.io)
 2. Create organisation e.g. `clarizalooktech`
 3. Create workspace: `student-admission-app-azure-dotnet` → API-driven → Auto apply
-4. Create Variable Set `azure-credentials` with these environment variables:
+4. Create Variable Set `azure-credentials` with these **environment** variables:
    - `ARM_CLIENT_ID`
    - `ARM_CLIENT_SECRET`
    - `ARM_TENANT_ID`
@@ -218,6 +241,14 @@ npx serve .
 # Open http://localhost:3000
 ```
 
+Get the Container App URL after deployment:
+```bash
+az containerapp show \
+  --name ca-admission-dev \
+  --resource-group student-admission-app-rg \
+  --query "properties.configuration.ingress.fqdn" -o tsv
+```
+
 ---
 
 ## Step 6 — Update Container App with OpenAI key
@@ -258,6 +289,8 @@ traces
 | order by timestamp desc
 ```
 
+---
+
 ## Tear down
 
 ```bash
@@ -280,3 +313,5 @@ az cognitiveservices account delete \
 - Container App name `ca-admission-dev` is hardcoded (Azure 32-char limit)
 - ACR admin credentials are fetched via Azure CLI in the pipeline — no manual secret setup needed
 - Terraform state lives in Terraform Cloud (free tier)
+- Terraform variable names are **lowercase** — GitHub secrets must match exactly (e.g. `TF_VAR_subscription_id`, not `TF_VAR_SUBSCRIPTION_ID`)
+- Always verify your active Azure subscription before running `az` commands: `az account show`
