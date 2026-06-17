@@ -6,7 +6,13 @@ variable "subscription_id" {
 variable "resource_group_name" {
   description = "Name of the resource group"
   type        = string
-  default     = "student-admission-app-azure-dotnet-rg"
+  default     = "student-admission-app-rg"
+}
+
+variable "acr_name" {
+  description = "Azure Container Registry name (must be globally unique, alphanumeric only)"
+  type        = string
+  default     = "acrstudentadmission"
 }
 
 variable "location" {
@@ -25,12 +31,6 @@ variable "environment" {
   description = "Environment name (dev, staging, prod)"
   type        = string
   default     = "dev"
-}
-
-variable "acr_name" {
-  description = "Azure Container Registry name (must be globally unique, alphanumeric only)"
-  type        = string
-  default     = "acradmissiondemo"
 }
 
 variable "openai_endpoint" {

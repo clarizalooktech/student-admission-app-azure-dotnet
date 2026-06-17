@@ -98,6 +98,10 @@ git push → GitHub Actions (deploy.yml)
 
 ```bash
 # Create the resource
+az group create \
+  --name "student-admission-app-rg" \
+  --location "australiaeast"
+  
 az cognitiveservices account create \
   --name "openai-student-admission" \
   --resource-group "student-admission-app-rg" \
