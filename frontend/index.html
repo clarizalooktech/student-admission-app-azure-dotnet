@@ -8,9 +8,9 @@
 </head>
 <body>
   <div id="root"></div>
-  <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
-  <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
-  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <script src="https://unpkg.com/react@18.2.0/umd/react.development.js"></script>
+  <script src="https://unpkg.com/react-dom@18.2.0/umd/react-dom.development.js"></script>
+  <script src="https://unpkg.com/@babel/standalone@7.23.10/babel.min.js"></script>
   <script type="text/babel">
 
 const STEPS = ['Personal', 'Academic', 'Documents', 'Review'];
@@ -22,7 +22,7 @@ function App() {
   const [form, setForm] = React.useState({
     firstName: '', lastName: '', email: '', phone: '', country: '',
     qualification: 'bachelors', gpa: '', field: '', institution: '', gradYear: '',
-    programme: 'master-cs', startDate: 'feb-2026', statement: '',
+    programme: 'master-cs', startDate: 'jul-2026', statement: '',
     hasTranscript: false, hasPassport: false, hasReferences: false,
   });
   const [agentState, setAgentState] = React.useState(null);
@@ -151,7 +151,7 @@ function StepDocuments({ form, update }) {
         <SelectField label="Programme" value={form.programme} onChange={v => update('programme', v)}
           options={[['master-cs', 'Master of Computer Science'], ['master-ba', 'Master of Business Admin'], ['master-eng', 'Master of Engineering'], ['master-data', 'Master of Data Science']]} />
         <SelectField label="Intake" value={form.startDate} onChange={v => update('startDate', v)}
-          options={[['feb-2026', 'February 2026'], ['jul-2026', 'July 2026'], ['feb-2027', 'February 2027']]} />
+          options={[['jul-2026', 'July 2026'], ['feb-2027', 'February 2027'], ['jul-2027', 'July 2027']]} />
       </div>
       <div className="form-group">
         <label>Personal statement</label>
