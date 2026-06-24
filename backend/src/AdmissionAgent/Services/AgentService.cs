@@ -104,19 +104,20 @@ public class AdmissionAgentService
     {
         var client = _openAi.GetChatClient(_config.Model);
 
-        var prompt = $"""
-            You are a university admission planner. Given this application, decide which tools to call.
-            Available tools: validate_documents, check_eligibility, score_application
-
-            Application summary:
-            - Qualification: {form.Qualification}, GPA: {form.Gpa}
-            - Field: {form.Field}, Institution: {form.Institution}
-            - Programme: {form.Programme}
-            - Documents: transcript={form.HasTranscript}, passport={form.HasPassport}, references={form.HasReferences}
-
-            Return ONLY a comma-separated list of tool names to call, nothing else.
-            Example: validate_documents,check_eligibility,score_application
-            """;
+        var prompt = string.Join("\n", new[]
+        {
+            "You are a university admission planner. Given this application, decide which tools to call.",
+            "Available tools: validate_documents, check_eligibility, score_application",
+            "",
+            "Application summary:",
+            $"- Qualification: {form.Qualification}, GPA: {form.Gpa}",
+            $"- Field: {form.Field}, Institution: {form.Institution}",
+            $"- Programme: {form.Programme}",
+            $"- Documents: transcript={form.HasTranscript}, passport={form.HasPassport}, references={form.HasReferences}",
+            "",
+            "Return ONLY a comma-separated list of tool names to call, nothing else.",
+            "Example: validate_documents,check_eligibility,score_application"
+        });
 
         var response = await client.CompleteChatAsync(
         [
@@ -143,47 +144,43 @@ public class AdmissionAgentService
     // ── Tool: Check eligibility using Assistants API + policy doc ─────────
     private async Task<string> CheckEligibilityWithPolicyAsync(ApplicationForm form)
     {
-        #pragma warning disable OPENAI001
+#pragma warning disable OPENAI001
         var assistantClient = _openAi.GetAssistantClient();
 
-        // Create a thread
         var thread = await assistantClient.CreateThreadAsync();
 
-        // Send the application details as a message
-        var message = $"""
-            Please check the eligibility of this student application against the admission policy document.
+        var message = string.Join("\n", new[]
+        {
+            "Please check the eligibility of this student application against the admission policy document.",
+            "",
+            "Applicant details:",
+            $"- Name: {form.FirstName} {form.LastName}",
+            $"- Programme applied for: {form.Programme}",
+            $"- Highest qualification: {form.Qualification}",
+            $"- Field of study: {form.Field}",
+            $"- GPA: {form.Gpa}",
+            $"- Graduation year: {form.GradYear}",
+            $"- Institution: {form.Institution}",
+            $"- Country: {form.Country}",
+            $"- Documents: transcript={form.HasTranscript}, passport={form.HasPassport}, references={form.HasReferences}",
+            "",
+            "Check:",
+            "1. Does the GPA meet the minimum requirement for this programme?",
+            "2. Is the prior qualification eligible for entry?",
+            "3. Are there any mathematics prerequisite requirements based on the field of study?",
+            "4. Should a bridging course be recommended?",
+            "5. Are there any country-specific requirements?",
+            "",
+            "Provide a concise eligibility summary."
+        });
 
-            Applicant details:
-            - Name: {form.FirstName} {form.LastName}
-            - Programme applied for: {form.Programme}
-            - Highest qualification: {form.Qualification}
-            - Field of study: {form.Field}
-            - GPA: {form.Gpa}
-            - Graduation year: {form.GradYear}
-            - Institution: {form.Institution}
-            - Country: {form.Country}
-            - Documents: transcript={form.HasTranscript}, passport={form.HasPassport}, references={form.HasReferences}
-
-            Check:
-            1. Does the GPA meet the minimum requirement for this programme?
-            2. Is the prior qualification eligible for entry?
-            3. Are there any mathematics prerequisite requirements based on the field of study?
-            4. Should a bridging course be recommended?
-            5. Are there any country-specific requirements?
-
-            Provide a concise eligibility summary.
-            """;
-
-        await assistantClient.CreateMessageAsync(thread.Value.Id, OpenAI.Assistants.MessageRole.User, [
-            OpenAI.Assistants.MessageContent.FromText(message)
+        await assistantClient.CreateMessageAsync(thread.Value.Id, MessageRole.User, [
+            MessageContent.FromText(message)
         ]);
 
-        // Run the assistant
         var run = await assistantClient.CreateRunAsync(thread.Value.Id, _config.AssistantId);
 
-        // Poll until complete
-        var maxWait = TimeSpan.FromSeconds(30);
-        var deadline = DateTime.UtcNow + maxWait;
+        var deadline = DateTime.UtcNow.AddSeconds(30);
         while (run.Value.Status != RunStatus.Completed && run.Value.Status != RunStatus.Failed)
         {
             if (DateTime.UtcNow > deadline)
@@ -196,14 +193,11 @@ public class AdmissionAgentService
         if (run.Value.Status == RunStatus.Failed)
             throw new Exception($"Assistant run failed: {run.Value.LastError?.Message}");
 
-        // Get the response
         var messages = assistantClient.GetMessagesAsync(thread.Value.Id);
         await foreach (var msg in messages)
         {
             if (msg.Role == MessageRole.Assistant)
-            {
                 return msg.Content.FirstOrDefault()?.Text ?? "No eligibility response.";
-            }
         }
 
         return "Could not retrieve eligibility check from policy document.";
@@ -233,28 +227,15 @@ public class AdmissionAgentService
         var toolSummary = string.Join("\n", toolResults.Select(kv => $"- {kv.Key}: {kv.Value}"));
 
         var prompt =
-            "You are a university admission officer at Navitas College.
-" +
-            "Based on the tool results below, make a final admission decision.
-
-" +
-            $"Applicant: {form.FirstName} {form.LastName}
-" +
-            $"Programme: {form.Programme}
-
-" +
-            $"Tool results:
-{toolSummary}
-
-" +
-            "Respond with JSON only, no markdown:
-" +
-            "{
-" +
-            "  "outcome": "approved" | "review" | "declined",
-" +
-            "  "summary": "2-3 sentence explanation for the applicant, including any bridging course recommendations if applicable"
-" +
+            "You are a university admission officer at Navitas College.\n" +
+            "Based on the tool results below, make a final admission decision.\n\n" +
+            $"Applicant: {form.FirstName} {form.LastName}\n" +
+            $"Programme: {form.Programme}\n\n" +
+            $"Tool results:\n{toolSummary}\n\n" +
+            "Respond with JSON only, no markdown:\n" +
+            "{\n" +
+            "  \"outcome\": \"approved\" | \"review\" | \"declined\",\n" +
+            "  \"summary\": \"2-3 sentence explanation including any bridging course recommendations\"\n" +
             "}";
 
         var response = await client.CompleteChatAsync(
@@ -263,10 +244,10 @@ public class AdmissionAgentService
             new OpenAI.Chat.UserChatMessage(prompt)
         ]);
 
-        var content = response.Value.Content[0].Text;
-
-        // Strip markdown fences if present
-        content = content.Replace("```json", "").Replace("```", "").Trim();
+        var content = response.Value.Content[0].Text
+            .Replace("```json", "")
+            .Replace("```", "")
+            .Trim();
 
         var json       = JsonDocument.Parse(content);
         var outcomeStr = json.RootElement.GetProperty("outcome").GetString() ?? "review";
