@@ -315,3 +315,59 @@ az cognitiveservices account delete \
 - Terraform state lives in Terraform Cloud (free tier)
 - Terraform variable names are **lowercase** — GitHub secrets must match exactly (e.g. `TF_VAR_subscription_id`, not `TF_VAR_SUBSCRIPTION_ID`)
 - Always verify your active Azure subscription before running `az` commands: `az account show`
+
+---
+
+## Step 7 — Set up Azure OpenAI Assistant with Admission Policy
+
+The agent uses the Azure OpenAI Assistants API with file search to evaluate applications against the admission policy document.
+
+### 7.1 — Upload the admission policy PDF
+
+```bash
+curl -X POST "https://YOUR_OPENAI_ENDPOINT/openai/files?api-version=2024-05-01-preview" \
+  -H "api-key: YOUR_OPENAI_KEY" \
+  -F "purpose=assistants" \
+  -F "file=@/path/to/N_Admission_Policy_2026.pdf"
+```
+
+Copy the `id` field from the response (e.g. `assistant-xxxxxxxxxxxx`).
+
+### 7.2 — Create the Assistant with file search
+
+```bash
+curl -X POST "https://YOUR_OPENAI_ENDPOINT/openai/assistants?api-version=2024-05-01-preview" \
+  -H "api-key: YOUR_OPENAI_KEY" \
+  -H "Content-Type: application/json" \
+  -d "{\"name\": \"admission-policy-assistant\", \"model\": \"gpt-4o\", \"instructions\": \"You are a student admission evaluator at N College. Use the attached admission policy document to evaluate student applications. Always check GPA, qualifications, documents, mathematics prerequisites, and bridging course requirements based on the policy.\", \"tools\": [{\"type\": \"file_search\"}], \"tool_resources\": {\"file_search\": {\"vector_stores\": [{\"file_ids\": [\"YOUR_FILE_ID\"]}]}}}"
+```
+
+Copy the `id` field from the response (e.g. `asst_xxxxxxxxxxxx`). This is your `AZURE_OPENAI_ASSISTANT_ID`.
+
+### 7.3 — Add Assistant ID to GitHub secrets
+
+Add to **GitHub → Settings → Secrets and variables → Actions**:
+
+| Secret | Value |
+|--------|-------|
+| `AZURE_OPENAI_ASSISTANT_ID` | `asst_xxxxxxxxxxxx` from step 7.2 |
+
+### 7.4 — Add Assistant ID to Container App
+
+```bash
+az containerapp update \
+  --name ca-admission-dev \
+  --resource-group student-admission-app-rg \
+  --set-env-vars \
+    AZURE_OPENAI_ASSISTANT_ID=asst_xxxxxxxxxxxx
+```
+
+### How the Assistant is used
+
+The `check_eligibility` tool in `AgentService.cs` creates a thread, sends the applicant's details, and runs the Assistant — which searches the policy PDF to return a policy-grounded eligibility result including:
+
+- GPA check against programme minimums
+- Qualification eligibility
+- Mathematics prerequisite check (MIT, MEng, MDS)
+- Bridging course recommendation if applicable
+- Country-specific credential requirements
