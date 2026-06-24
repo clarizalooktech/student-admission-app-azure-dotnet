@@ -50,3 +50,7 @@ variable "openai_model" {
   default     = "gpt-4o"
 }
 
+variable "openai_assistant_id" {
+  description = "Azure OpenAI Assistant ID for admission policy file search"
+  type        = string
+}

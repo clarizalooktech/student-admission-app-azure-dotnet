@@ -55,6 +55,10 @@ resource "azurerm_container_app" "backend" {
         value = var.openai_model
       }
       env {
+        name  = "AZURE_OPENAI_ASSISTANT_ID"
+        value = var.openai_assistant_id
+      }
+      env {
         name        = "APPLICATIONINSIGHTS_CONNECTION_STRING"
         secret_name = "appinsights-cs"
       }
