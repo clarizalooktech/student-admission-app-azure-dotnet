@@ -1,15 +1,17 @@
 using System.Diagnostics;
 using System.Diagnostics.Metrics;
+using System.Text.Json;
 using Azure.AI.OpenAI;
+using OpenAI.Assistants;
 using AdmissionAgent.Models;
 
 namespace AdmissionAgent.Services;
 
-public record AgentConfig(string Model);
+public record AgentConfig(string Model, string AssistantId);
 
 public class AdmissionAgentService
 {
-    private readonly OpenAIClient _openAi;
+    private readonly AzureOpenAIClient _openAi;
     private readonly AgentConfig _config;
     private readonly ILogger<AdmissionAgentService> _logger;
 
@@ -23,13 +25,13 @@ public class AdmissionAgentService
         _meter.CreateHistogram<double>("admission_evaluation_duration_ms", description: "Evaluation duration in ms");
 
     public AdmissionAgentService(
-        OpenAIClient openAi,
+        AzureOpenAIClient openAi,
         AgentConfig config,
         ILogger<AdmissionAgentService> logger)
     {
-        _openAi  = openAi;
-        _config  = config;
-        _logger  = logger;
+        _openAi = openAi;
+        _config = config;
+        _logger = logger;
     }
 
     // ── Entry point ────────────────────────────────────────────────────────
@@ -44,12 +46,12 @@ public class AdmissionAgentService
 
         try
         {
-            // ── STEP 1: Planner — decide which tools to call ───────────────
+            // ── STEP 1: Planner ────────────────────────────────────────────
             steps.Add(new AgentStep("Planner: analysing application", StepStatus.Done));
             var plan = await PlanAsync(form);
             _logger.LogInformation("Plan: {Plan}", plan);
 
-            // ── STEP 2: Tool Executor — run each tool in the plan ──────────
+            // ── STEP 2: Tool Executor ──────────────────────────────────────
             var toolResults = new Dictionary<string, string>();
 
             if (plan.Contains("validate_documents"))
@@ -63,7 +65,7 @@ public class AdmissionAgentService
             if (plan.Contains("check_eligibility"))
             {
                 steps.Add(new AgentStep("Tool: check eligibility requirements", StepStatus.Active));
-                toolResults["check_eligibility"] = CheckEligibility(form);
+                toolResults["check_eligibility"] = await CheckEligibilityWithPolicyAsync(form);
                 steps[^1] = steps[^1] with { Status = StepStatus.Done };
                 _agentStepsTotal.Add(1, new TagList { { "tool", "check_eligibility" } });
             }
@@ -76,7 +78,7 @@ public class AdmissionAgentService
                 _agentStepsTotal.Add(1, new TagList { { "tool", "score_application" } });
             }
 
-            // ── STEP 3: Synthesiser — produce the final decision ───────────
+            // ── STEP 3: Synthesiser ────────────────────────────────────────
             steps.Add(new AgentStep("Synthesiser: generating decision", StepStatus.Active));
             var decision = await SynthesiseAsync(form, toolResults);
             steps[^1] = steps[^1] with { Status = StepStatus.Done };
@@ -100,63 +102,111 @@ public class AdmissionAgentService
     // ── Planner: ask GPT which tools are needed ───────────────────────────
     private async Task<string> PlanAsync(ApplicationForm form)
     {
+        var client = _openAi.GetChatClient(_config.Model);
+
         var prompt = $"""
             You are a university admission planner. Given this application, decide which tools to call.
             Available tools: validate_documents, check_eligibility, score_application
-            
+
             Application summary:
             - Qualification: {form.Qualification}, GPA: {form.Gpa}
             - Field: {form.Field}, Institution: {form.Institution}
             - Programme: {form.Programme}
             - Documents: transcript={form.HasTranscript}, passport={form.HasPassport}, references={form.HasReferences}
-            
+
             Return ONLY a comma-separated list of tool names to call, nothing else.
             Example: validate_documents,check_eligibility,score_application
             """;
 
-        var response = await _openAi.GetChatCompletionsAsync(
-            new ChatCompletionsOptions(_config.Model, [
-                new ChatRequestSystemMessage("You are a university admission AI planner. Be concise."),
-                new ChatRequestUserMessage(prompt)
-            ]) { MaxTokens = 50, Temperature = 0 });
+        var response = await client.CompleteChatAsync(
+        [
+            new OpenAI.Chat.SystemChatMessage("You are a university admission AI planner. Be concise."),
+            new OpenAI.Chat.UserChatMessage(prompt)
+        ]);
 
-        return response.Value.Choices[0].Message.Content;
+        return response.Value.Content[0].Text;
     }
 
     // ── Tool: Validate documents ──────────────────────────────────────────
     private static string ValidateDocuments(ApplicationForm form)
     {
         var issues = new List<string>();
-        if (!form.HasTranscript)  issues.Add("missing academic transcript");
-        if (!form.HasPassport)    issues.Add("missing passport/ID");
-        if (!form.HasReferences)  issues.Add("missing reference letters");
+        if (!form.HasTranscript) issues.Add("missing academic transcript");
+        if (!form.HasPassport)   issues.Add("missing passport/ID");
+        if (!form.HasReferences) issues.Add("missing reference letters");
 
         return issues.Count == 0
             ? "All required documents are present."
             : $"Missing documents: {string.Join(", ", issues)}.";
     }
 
-    // ── Tool: Check eligibility ───────────────────────────────────────────
-    private static string CheckEligibility(ApplicationForm form)
+    // ── Tool: Check eligibility using Assistants API + policy doc ─────────
+    private async Task<string> CheckEligibilityWithPolicyAsync(ApplicationForm form)
     {
-        var issues = new List<string>();
+        #pragma warning disable OPENAI001
+        var assistantClient = _openAi.GetAssistantClient();
 
-        // GPA check — parse "3.7 / 4.0" or "3.7"
-        var gpaRaw = form.Gpa.Split('/')[0].Trim();
-        if (double.TryParse(gpaRaw, out var gpa) && gpa < 3.0)
-            issues.Add($"GPA {gpa:F1} is below the minimum of 3.0");
+        // Create a thread
+        var thread = await assistantClient.CreateThreadAsync();
 
-        // Qualification check
-        if (form.Qualification is "diploma" or "other")
-            issues.Add("qualification level may not meet entry requirements");
+        // Send the application details as a message
+        var message = $"""
+            Please check the eligibility of this student application against the admission policy document.
 
-        // Grad year — must not be in the future
-        if (int.TryParse(form.GradYear, out var year) && year > DateTime.UtcNow.Year)
-            issues.Add("graduation year is in the future");
+            Applicant details:
+            - Name: {form.FirstName} {form.LastName}
+            - Programme applied for: {form.Programme}
+            - Highest qualification: {form.Qualification}
+            - Field of study: {form.Field}
+            - GPA: {form.Gpa}
+            - Graduation year: {form.GradYear}
+            - Institution: {form.Institution}
+            - Country: {form.Country}
+            - Documents: transcript={form.HasTranscript}, passport={form.HasPassport}, references={form.HasReferences}
 
-        return issues.Count == 0
-            ? "Applicant meets all eligibility requirements."
-            : $"Eligibility issues: {string.Join("; ", issues)}.";
+            Check:
+            1. Does the GPA meet the minimum requirement for this programme?
+            2. Is the prior qualification eligible for entry?
+            3. Are there any mathematics prerequisite requirements based on the field of study?
+            4. Should a bridging course be recommended?
+            5. Are there any country-specific requirements?
+
+            Provide a concise eligibility summary.
+            """;
+
+        await assistantClient.CreateMessageAsync(thread.Value.Id, OpenAI.Assistants.MessageRole.User, [
+            OpenAI.Assistants.MessageContent.FromText(message)
+        ]);
+
+        // Run the assistant
+        var run = await assistantClient.CreateRunAsync(thread.Value.Id, _config.AssistantId);
+
+        // Poll until complete
+        var maxWait = TimeSpan.FromSeconds(30);
+        var deadline = DateTime.UtcNow + maxWait;
+        while (run.Value.Status != RunStatus.Completed && run.Value.Status != RunStatus.Failed)
+        {
+            if (DateTime.UtcNow > deadline)
+                throw new TimeoutException("Assistant run timed out.");
+
+            await Task.Delay(1500);
+            run = await assistantClient.GetRunAsync(thread.Value.Id, run.Value.Id);
+        }
+
+        if (run.Value.Status == RunStatus.Failed)
+            throw new Exception($"Assistant run failed: {run.Value.LastError?.Message}");
+
+        // Get the response
+        var messages = assistantClient.GetMessagesAsync(thread.Value.Id);
+        await foreach (var msg in messages)
+        {
+            if (msg.Role == MessageRole.Assistant)
+            {
+                return msg.Content.FirstOrDefault()?.Text ?? "No eligibility response.";
+            }
+        }
+
+        return "Could not retrieve eligibility check from policy document.";
     }
 
     // ── Tool: Score application ───────────────────────────────────────────
@@ -164,49 +214,53 @@ public class AdmissionAgentService
     {
         var score = 0;
 
-        // GPA
         var gpaRaw = form.Gpa.Split('/')[0].Trim();
         if (double.TryParse(gpaRaw, out var gpa))
             score += gpa >= 3.7 ? 40 : gpa >= 3.3 ? 30 : gpa >= 3.0 ? 20 : 5;
 
-        // Qualification
         score += form.Qualification == "masters" ? 30 : form.Qualification == "bachelors" ? 25 : 10;
-
-        // Documents complete
         score += (form.HasTranscript ? 10 : 0) + (form.HasPassport ? 5 : 0) + (form.HasReferences ? 10 : 0);
-
-        // Statement provided
         score += form.Statement.Length > 50 ? 5 : 0;
 
         return $"Application score: {score}/100. " +
                (score >= 75 ? "Strong application." : score >= 50 ? "Borderline — may need review." : "Weak application.");
     }
 
-    // ── Synthesiser: produce final human-readable decision ───────────────
+    // ── Synthesiser: produce final human-readable decision ────────────────
     private async Task<Decision> SynthesiseAsync(ApplicationForm form, Dictionary<string, string> toolResults)
     {
+        var client = _openAi.GetChatClient(_config.Model);
         var toolSummary = string.Join("\n", toolResults.Select(kv => $"- {kv.Key}: {kv.Value}"));
 
-        var prompt = $"You are a university admission officer. Based on the tool results below, make a final decision.\n\n" +
-            $"Applicant: {form.FirstName} {form.LastName}\n" +
-            $"Programme: {form.Programme}\n\n" +
-            $"Tool results:\n{toolSummary}\n\n" +
-            "Respond with JSON only, no markdown:\n" +
-            "{\n" +
-            "  \"outcome\": \"approved\" | \"review\" | \"declined\",\n" +
-            "  \"summary\": \"2-3 sentence explanation for the applicant\"\n" +
-            "}";
+        var prompt = $"""
+            You are a university admission officer at Navitas College.
+            Based on the tool results below, make a final admission decision.
 
-        var response = await _openAi.GetChatCompletionsAsync(
-            new ChatCompletionsOptions(_config.Model, [
-                new ChatRequestSystemMessage("You are a university admission officer. Respond only with JSON."),
-                new ChatRequestUserMessage(prompt)
-            ]) { MaxTokens = 200, Temperature = 0.2f });
+            Applicant: {form.FirstName} {form.LastName}
+            Programme: {form.Programme}
 
-        var content = response.Value.Choices[0].Message.Content;
+            Tool results:
+            {toolSummary}
 
-        // Parse the JSON response
-        var json = System.Text.Json.JsonDocument.Parse(content);
+            Respond with JSON only, no markdown:
+            {{
+              "outcome": "approved" | "review" | "declined",
+              "summary": "2-3 sentence explanation for the applicant, including any bridging course recommendations if applicable"
+            }}
+            """;
+
+        var response = await client.CompleteChatAsync(
+        [
+            new OpenAI.Chat.SystemChatMessage("You are a university admission officer. Respond only with valid JSON."),
+            new OpenAI.Chat.UserChatMessage(prompt)
+        ]);
+
+        var content = response.Value.Content[0].Text;
+
+        // Strip markdown fences if present
+        content = content.Replace("```json", "").Replace("```", "").Trim();
+
+        var json       = JsonDocument.Parse(content);
         var outcomeStr = json.RootElement.GetProperty("outcome").GetString() ?? "review";
         var summary    = json.RootElement.GetProperty("summary").GetString() ?? "No summary provided.";
 
