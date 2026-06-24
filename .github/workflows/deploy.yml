@@ -87,7 +87,8 @@ jobs:
             -var="resource_group_name=${{ secrets.TF_VAR_RESOURCE_GROUP_NAME }}" \
             -var="acr_name=${{ secrets.TF_VAR_ACR_NAME }}" \
             -var="openai_endpoint=${{ secrets.OPENAI_ENDPOINT }}" \
-            -var="openai_api_key=${{ secrets.OPENAI_API_KEY }}"
+            -var="openai_api_key=${{ secrets.OPENAI_API_KEY }}" \
+            -var="openai_assistant_id=${{ secrets.TF_VAR_openai_assistant_id }}"
 
       - name: Log in to Azure
         uses: azure/login@v2
