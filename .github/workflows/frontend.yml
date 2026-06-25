@@ -62,7 +62,7 @@ jobs:
             --destination '$web' \
             --source frontend/ \
             --overwrite true \
-            --auth-mode login
+            --auth-mode key
 
       - name: Get frontend URL
         run: |
